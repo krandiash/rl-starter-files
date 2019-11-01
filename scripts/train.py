@@ -9,7 +9,6 @@ import sys
 import utils
 from model import ACModel
 
-
 # Parse arguments
 
 parser = argparse.ArgumentParser()
