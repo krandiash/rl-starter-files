@@ -1,6 +1,8 @@
 import argparse
 import time
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
 from torch_ac.utils.penv import ParallelEnv
 
 import utils
@@ -51,7 +53,7 @@ print("Agent loaded\n")
 
 # Initialize logs
 
-logs = {"num_frames_per_episode": [], "return_per_episode": []}
+logs = {"num_frames_per_episode": [], "return_per_episode": [], "events_per_episode": []}
 
 # Run agent
 
@@ -62,11 +64,15 @@ obss = env.reset()
 log_done_counter = 0
 log_episode_return = torch.zeros(args.procs, device=device)
 log_episode_num_frames = torch.zeros(args.procs, device=device)
+log_events = [[] for _ in range(args.procs)]
 
 while log_done_counter < args.episodes:
     actions = agent.get_actions(obss)
-    obss, rewards, dones, _ = env.step(actions)
+    obss, rewards, dones, infos = env.step(actions)
     agent.analyze_feedbacks(rewards, dones)
+
+    for i in range(args.procs):
+        log_events[i].append(infos[i]['events'])
 
     log_episode_return += torch.tensor(rewards, device=device, dtype=torch.float)
     log_episode_num_frames += torch.ones(args.procs, device=device)
@@ -76,6 +82,8 @@ while log_done_counter < args.episodes:
             log_done_counter += 1
             logs["return_per_episode"].append(log_episode_return[i].item())
             logs["num_frames_per_episode"].append(log_episode_num_frames[i].item())
+            logs["events_per_episode"].append(log_events[i])
+            log_events[i] = []
 
     mask = 1 - torch.tensor(dones, device=device, dtype=torch.float)
     log_episode_return *= mask
@@ -105,3 +113,33 @@ if n > 0:
     indexes = sorted(range(len(logs["return_per_episode"])), key=lambda k: logs["return_per_episode"][k])
     for i in indexes[:n]:
         print("- episode {}: R={}, F={}".format(i, logs["return_per_episode"][i], logs["num_frames_per_episode"][i]))
+
+
+
+
+# Print events
+events = ['key_picked', 'left_door_1_passed', 'left_door_2_passed', 'locked_door_passed', 'key_dropped', 'ball_picked', 'distractor_key_picked', 'distractor_key_dropped']
+
+goals_achieved = []
+when_achieved = []
+for ep_events in logs["events_per_episode"]:
+    ep_events = np.array(ep_events)
+    goals_achieved.append(np.max(ep_events, axis=0))
+
+    when = np.argmax(ep_events, axis=0).astype(np.float)
+    when[when == 0] = np.nan
+    when_achieved.append(when)
+
+print (goals_achieved)
+print (when_achieved)
+
+goals_achieved = np.array(goals_achieved)
+when_achieved = np.array(when_achieved)
+print ("\nevent success rates | steps to success:")
+for i, event in enumerate(events):
+    goal_stats = utils.synthesize(goals_achieved[:, i])
+    when_stats = utils.synthesize(when_achieved[:, i])
+    print("- {}:μσmM {:.2f} {:.2f} {:.2f} {:.2f} | μσmM {:.2f} {:.2f} {:.2f} {:.2f}".format(events[i], *goal_stats.values(), *when_stats.values()))
+
+
+
